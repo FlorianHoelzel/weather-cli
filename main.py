@@ -2,12 +2,33 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import os
+import socket
+import ssl
 import sys
 import time
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 from display import TerminalScreen, format_weather
 from weather import get_coordinates, get_weather
+
+
+def connection_error(exc: OSError) -> str:
+    """Explain network failures without hiding TLS or HTTP errors."""
+    if isinstance(exc, HTTPError):
+        return f"Wetterdienst antwortet mit HTTP {exc.code}."
+    reason = exc.reason if isinstance(exc, URLError) else exc
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return (
+            "TLS-Zertifikat konnte nicht geprüft werden "
+            f"({reason.verify_message}). Systemdatum und Zertifikate prüfen."
+        )
+    if isinstance(reason, ssl.SSLError):
+        return "Sichere TLS-Verbindung fehlgeschlagen."
+    if isinstance(reason, TimeoutError):
+        return "Zeitüberschreitung beim Verbindungsaufbau oder Datenabruf."
+    if isinstance(reason, socket.gaierror):
+        return "Serveradresse konnte nicht aufgelöst werden (DNS)."
+    return "Verbindung fehlgeschlagen. Internetverbindung, Proxy und Firewall prüfen."
 
 
 def positive_minutes(value: str) -> int:
@@ -33,8 +54,8 @@ def main() -> int:
 
     try:
         latitude, longitude = get_coordinates(args.city)
-    except (URLError, OSError):
-        print("Ortssuche fehlgeschlagen: Verbindung zur API nicht möglich.", file=sys.stderr)
+    except (URLError, OSError) as exc:
+        print(f"Ortssuche fehlgeschlagen: {connection_error(exc)}", file=sys.stderr)
         return 1
     except (ValueError, KeyError, TypeError, IndexError):
         print("Stadt nicht gefunden oder ungültige Antwort der Ortssuche.", file=sys.stderr)
@@ -61,12 +82,12 @@ def main() -> int:
                     last_weather = pending.result()
                     last_success = datetime.now().astimezone().strftime("%H:%M:%S %Z")
                     error = None
-                except (URLError, OSError):
-                    error = "Verbindung fehlgeschlagen."
+                except (URLError, OSError) as exc:
+                    error = connection_error(exc)
                 except (ValueError, KeyError, TypeError):
                     error = "Ungültige Wetterantwort erhalten."
                 pending = None
-                next_fetch = time.monotonic() + args.interval * 60
+                next_fetch = time.monotonic() + (15 if error else args.interval * 60)
                 changed = True
 
             if changed or animate:
@@ -77,6 +98,8 @@ def main() -> int:
                         frame=frame if animate else None,
                     ))
                     lines.append(f"\nLetzter erfolgreicher Abruf: {last_success}")
+                elif error:
+                    lines.append(f"Wetter für {args.city} konnte nicht geladen werden.")
                 else:
                     lines.append(f"Wetter für {args.city} wird geladen ...")
                 if error:
