@@ -356,42 +356,53 @@ def format_weather(
         ' '.join(DIGITS[char][row] for char in temperature)
         for row in range(5)
     ]
+    accent = (220 if is_day else 141) if code in (0, 1, 2) else (
+        141 if code in (95, 96, 97, 99) else 45)
+    timestamp = str(weather['time'])
+    if timestamp[10:11] == 'T':
+        timestamp = timestamp[:10] + ' ' + timestamp[11:]
+    humidity = max(0, min(100, int(weather['humidity'])))
+    meter = '#' * (humidity // 10) + '.' * (10 - humidity // 10)
     left = [
-        "W E A T H E R  / /  C L I",
-        "=" * 28,
-        city.upper(),
-        condition,
-        "",
-        *big_number,
-        "CELSIUS / AKTUELL",
-        "",
-        f"GEFUEHLT     {weather['feels_like']:.1f} °C",
-        f"FEUCHTE      {weather['humidity']} %",
-        f"WIND         {weather['wind']:.1f} km/h",
-        "",
-        "DATENZEIT / ORTSZEIT",
-        (str(weather['time'])[:10] + '  ' + str(weather['time'])[11:]
-         if str(weather['time'])[10:11] == 'T' else str(weather['time'])),
-        "=" * 28,
-        "QUELLE / OPEN-METEO",
+        ("01 / LIVE WEATHER", accent),
+        (city.upper(), 231),
+        (condition.upper(), accent),
+        ("", 245),
+        *[(line.replace('#', '@'), 231) for line in big_number],
+        ("DEG C  /  AKTUELL", accent),
+        ("", 245),
+        (f"FEELS LIKE   {weather['feels_like']:.1f} C", 250),
+        (f"HUMIDITY     {weather['humidity']} %", 250),
+        (f"             [{meter}]", accent),
+        (f"WIND         {weather['wind']:.1f} km/h", 250),
+        ("", 245),
+        ("LOCAL TIME / DATENZEIT", 245),
+        (timestamp, 250),
     ]
-    left_width = max(len(line) for line in left)
     art_width = max(map(len, art))
-    shades = [45 if i in (0, 2) else 231 if 5 <= i <= 9 else 245 for i in range(len(left))]
+    left_width = max(28, *(len(line) for line, _ in left))
     painted_art = _paint_scene(art, code, is_day, color)
-    # On narrow terminals keep the scene whole, below the readings.
-    if width < left_width + art_width + 7:
-        readings = [_paint(line, shades[i], color, bold=5 <= i <= 9)
-                    for i, line in enumerate(left)]
-        return '\n'.join(readings + [''] + painted_art)
-    rows = []
-    for i in range(max(len(left), len(art))):
-        text = left[i] if i < len(left) else ''
-        padded = text.ljust(left_width)
-        left_part = _paint(padded, shades[i] if i < len(shades) else 245, color,
-                           bold=5 <= i <= 9)
-        sky = painted_art[i] if i < len(painted_art) else ''
-        rows.append(left_part + _paint('   |   ', 238, color) + sky)
+    wide = width >= left_width + art_width + 9
+    panel_width = left_width + art_width + 7 if wide else max(left_width + 4, art_width + 4)
+    rule = _paint('+' + '-' * (panel_width - 2) + '+', accent, color)
+    title = " ATMOSPHERE / WEATHER CLI "
+    header = _paint('+' + title + '-' * max(0, panel_width - len(title) - 2) + '+', accent, color, bold=True)
+    rows = [header]
+    if wide:
+        for i in range(max(len(left), len(art))):
+            text, shade = left[i] if i < len(left) else ('', 245)
+            sky = painted_art[i] if i < len(painted_art) else ''
+            sky_padding = art_width - len(art[i]) if i < len(art) else art_width
+            rows.append(_paint('| ', accent, color) + _paint(text.ljust(left_width), shade, color, bold=1 <= i <= 2 or 4 <= i <= 8) +
+                        _paint(' | ', 238, color) + sky + ' ' * sky_padding + _paint(' |', accent, color))
+    else:
+        for i, (line, shade) in enumerate(left):
+            rows.append(_paint('| ', accent, color) + _paint(line.ljust(panel_width - 4), shade, color, bold=1 <= i <= 2 or 4 <= i <= 8) + _paint(' |', accent, color))
+        rows.append(rule)
+        for i, sky in enumerate(painted_art):
+            rows.append(_paint('| ', accent, color) + sky + ' ' * (panel_width - 4 - len(art[i])) + _paint(' |', accent, color))
+    rows.append(rule)
+    rows.append(_paint('  OPEN-METEO  /  WEATHER DATA', 245, color))
     return '\n'.join(rows)
 
 
